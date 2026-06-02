@@ -35,10 +35,41 @@ vectorStore = PineconeVectorStore(index_name="rag-document-assistant", embedding
 tavily_extract = TavilyExtract()
 tavily_crawl = TavilyCrawl()
 
+async def index_documents_async(documents: List[Document], batch_size: int = 50):
+    """Async function to process documents and index tthem in batches"""
+    print("Vector Storage Phase \n")
+    # Create batches
+    batches=[
+        documents[i : i+batch_size] for i in range (0, len(documents), batch_size)
+    ]
+
+    print(f"Documents Split into {len(batches)} batches \n")
+
+    # Process all batches concurrently
+    async def add_batch(batch: List[Document], batch_num: int):
+        try:
+            vectorStore.add_documents(batch)
+            print(f"Successfully added batch number: {batch_num}/{len(batches)}")
+        except Exception as e:
+            print(f"Failed to add batch {batch_num}/{len(batches)}: {type(e).__name__}: {e}")
+            return False
+        return True
+    
+    #Process batches concurrently
+    tasks = [add_batch(batch, i+1) for i, batch in enumerate(batches)]
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+
+    #Count successful batches
+    successful = sum(1 for result in results if result is True)
+
+    if successful == len(batches):
+        print("All batches processed successfully")
+    else:
+        print(f"Processed {successful/len(batches)} batches successfully")
+
 async def main():
     """Main async function to orchestrate the entire ingestion process"""
-    print("DOCUMENTATION INGESTION PIPELINE")
-    print()
+    print("DOCUMENTATION INGESTION PIPELINE \n")
     print("TavilyCrawl: Startig to crawl documentation at https://en.wikipedia.org/wiki/Hossam_Hassan")
     res = tavily_crawl.invoke({
         "url": "https://en.wikipedia.org/wiki/Hossam_Hassan",
@@ -47,7 +78,20 @@ async def main():
     })
 
     all_docs=[Document(page_content=result['raw_content'], metadata={"source":result['url']}) for result in res['results']]
-    print(all_docs)
+    print(f"{all_docs} \n")
+
+    # Split Documents into CHunks
+    print("Splitting Documents into Chunks \n")
+    text_splitter=RecursiveCharacterTextSplitter(chunk_size=4000, chunk_overlap=200)
+    splitted_docs=text_splitter.split_documents(all_docs)
+
+    #Index documents asynchronously
+    await index_documents_async(splitted_docs, batch_size=500)
+
+    print("Pipeline Completed")
+
+
+
 
 
 
